@@ -1,6 +1,21 @@
 # agentrouter-opencode-proxy
 
-A local proxy that lets [OpenCode](https://opencode.ai) (and any Node.js AI SDK client) use [AgentRouter](https://agentrouter.org) as an Anthropic-compatible LLM backend.
+A local proxy that lets the following Node.js AI coding clients use [AgentRouter](https://agentrouter.org) as an Anthropic-compatible LLM backend:
+
+| Client | Built on |
+|--------|----------|
+| [OpenCode](https://opencode.ai) | Vercel AI SDK (`@ai-sdk/anthropic`) |
+| [Claude Code](https://claude.ai/code) | `@anthropic-ai/sdk` |
+| [Cursor](https://cursor.com) | Anthropic / OpenAI API |
+| [Cline](https://github.com/cline/cline) | `@anthropic-ai/sdk` |
+| [Continue.dev](https://continue.dev) | `@anthropic-ai/sdk` |
+| [Zed](https://zed.dev) | Anthropic API |
+| [Aider](https://aider.chat) | `litellm` (Python, OpenAI-compatible) |
+| Any app using [Vercel AI SDK](https://sdk.vercel.ai) | `@ai-sdk/anthropic` |
+| Any app using [`@anthropic-ai/sdk`](https://github.com/anthropic-ai/sdk-python) | Node.js Anthropic SDK |
+| Any app using [LangChain.js](https://js.langchain.com) | `@langchain/anthropic` |
+
+Point any of these at `http://localhost:7187` and they'll work with AgentRouter.
 
 ## Get $150 in free credits
 
@@ -25,7 +40,7 @@ Everything else — `curl`, Node.js `fetch`, Python `httpx.AsyncClient`, raw `ht
 {"error":{"message":"unauthorized client detected, contact support..."}}
 ```
 
-This proxy runs locally on port `7187`, receives requests from OpenCode's Node.js AI SDK, and re-issues them to AgentRouter using the **Python sync `anthropic` SDK** — which carries the correct TLS fingerprint.
+This proxy runs locally on port `7187`, receives requests from any Node.js AI SDK client, and re-issues them to AgentRouter using the **Python sync `anthropic` SDK** — which carries the correct TLS fingerprint.
 
 ---
 
@@ -137,7 +152,7 @@ This is the exact architecture of `proxy.py` in this repo.
 
 - Python 3.11+
 - An [AgentRouter](https://agentrouter.org/register?aff=pP0u) account with an API key (`sk-...` from `agentrouter.org/console/token`)
-- [OpenCode](https://opencode.ai) installed
+- One of the supported clients above
 
 ## Setup
 
@@ -169,9 +184,11 @@ Or set it as an environment variable instead:
 export AGENTROUTER_API_KEY=sk-YOUR_KEY_HERE
 ```
 
-### 4. Configure OpenCode
+### 4. Configure your client
 
-Add this to your `~/.config/opencode/opencode.json`:
+#### OpenCode
+
+Add this to `~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -181,15 +198,24 @@ Add this to your `~/.config/opencode/opencode.json`:
         "apiKey": "{file:~/.config/opencode/api_keys/AGENT_ROUTER_API_KEY}",
         "baseURL": "http://localhost:7187"
       },
-      "whitelist": [
-        "claude-opus-4-6"
-      ]
+      "whitelist": ["claude-opus-4-6"]
     }
   }
 }
 ```
 
-> **Note:** Only `claude-opus-4-6` had reliable capacity on AgentRouter at the time of writing. Other models return `503 no available channel`. Check the [AgentRouter model list](https://agentrouter.org/models) for current availability and update the whitelist accordingly.
+#### Claude Code / Cline / Continue / any Anthropic-compatible client
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:7187
+export ANTHROPIC_API_KEY=sk-YOUR_KEY_HERE
+```
+
+#### Cursor / any OpenAI-compatible client
+
+Set the base URL to `http://localhost:7187` and the API key to your AgentRouter key in the client's settings.
+
+> **Note:** Only `claude-opus-4-6` had reliable capacity on AgentRouter at the time of writing. Other models return `503 no available channel`. Check the [AgentRouter model list](https://agentrouter.org/models) for current availability.
 
 ### 5. Start the proxy
 
@@ -206,9 +232,9 @@ AgentRouter proxy  →  https://agentrouter.org
 Listening on http://127.0.0.1:7187
 ```
 
-### 6. Start OpenCode
+### 6. Start your client
 
-Open a new terminal and run OpenCode normally. Select `anthropic/claude-opus-4-6` as your model.
+Select `anthropic/claude-opus-4-6` (or the equivalent model name in your client).
 
 ## Auto-start on macOS (optional)
 
@@ -260,7 +286,7 @@ A successful response means the WAF check passed and the model has capacity.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `unauthorized client detected` | WAF blocked — not using proxy | Ensure you're pointing OpenCode at `http://localhost:7187`, not agentrouter.org directly |
+| `unauthorized client detected` | WAF blocked — not using proxy | Ensure your client points to `http://localhost:7187`, not agentrouter.org directly |
 | `503 no available channel` | Model pool exhausted on agentrouter.org | Try another model or wait and retry |
 | `content-blocked` | Non-standard request fields | Proxy strips `thinking` and `output_config` already; if it persists, report an issue |
 | `Not Found` from proxy | Wrong path | Proxy handles `/messages` and `/v1/messages` — ensure `baseURL` has no path suffix |
