@@ -4,12 +4,15 @@ agentrouter-proxy: thin reverse-proxy for agentrouter.org.
 
 AgentRouter's Aliyun WAF fingerprints TLS handshakes AND inspects
 Anthropic SDK-specific headers (x-stainless-*, user-agent). Raw httpx
-is blocked. Only requests made through the Python sync `anthropic` SDK
-pass the check.
+is blocked, and the AsyncAnthropic client is also rejected because its
+asyncio SSL implementation produces a different TLS fingerprint.
+Only requests made through the Python sync `anthropic` SDK pass the check.
 
-This proxy uses `anthropic.Anthropic` (sync) in a thread so OpenCode's
-Node.js AI SDK can talk to it on localhost and we handle the upstream
-leg with the correct fingerprint.
+This proxy keeps a single sync `anthropic.Anthropic` client (shared
+connection pool, short keepalive_expiry to prevent zombie connections
+when the upstream load balancer silently closes idle sockets).
+Both the non-streaming and streaming paths offload to a thread via
+asyncio.to_thread / a thread+queue so the FastAPI event loop stays free.
 
 Usage:
     python proxy.py           # reads key from ~/.config/opencode/api_keys/AGENT_ROUTER_API_KEY
@@ -28,11 +31,26 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 
 TARGET   = "https://agentrouter.org"
 PORT     = 7187
 KEY_FILE = Path.home() / ".config/opencode/api_keys/AGENT_ROUTER_API_KEY"
+
+# Seconds between received SSE chunks before aborting a streaming request.
+CHUNK_TIMEOUT = 120
+
+# agentrouter.org's load balancer drops idle connections after ~30 s.
+# Setting keepalive_expiry below that threshold prevents our pool from
+# trying to reuse a connection the server has already closed (zombie socket).
+_HTTP_CLIENT = httpx.Client(
+    limits=httpx.Limits(
+        max_connections=50,
+        max_keepalive_connections=5,
+        keepalive_expiry=20.0,
+    ),
+    timeout=httpx.Timeout(connect=10, read=CHUNK_TIMEOUT, write=10, pool=5),
+)
 
 
 def _api_key() -> str:
@@ -51,20 +69,21 @@ _anthropic_client: anthropic.Anthropic | None = None
 
 
 def _client() -> anthropic.Anthropic:
+    """Return the module-level sync client singleton (connection pool reused across requests)."""
     global _anthropic_client
     if _anthropic_client is None:
         _anthropic_client = anthropic.Anthropic(
             api_key=_api_key(),
             base_url=TARGET,
-            timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
+            http_client=_HTTP_CLIENT,
         )
     return _anthropic_client
 
 
-# ── Request translation ─────────────────────────────────────────────────────────────────
+# ── Request translation ───────────────────────────────────────────────────────
 
-_SKIP   = {"stream"}                        # handled separately
-_STRIP  = {"thinking", "output_config"}     # non-standard; trigger agentrouter content filter
+_SKIP  = {"stream"}                     # handled separately
+_STRIP = {"thinking", "output_config"}  # non-standard; trigger agentrouter content filter
 
 
 def _kwargs(body: dict) -> dict:
@@ -72,7 +91,7 @@ def _kwargs(body: dict) -> dict:
     return {k: v for k, v in body.items() if k not in _SKIP and k not in _STRIP}
 
 
-# ── Streaming helper ───────────────────────────────────────────────────────────────────
+# ── Streaming helper ──────────────────────────────────────────────────────────
 
 def _stream_worker(kw: dict, q: queue.Queue) -> None:
     """
@@ -84,7 +103,7 @@ def _stream_worker(kw: dict, q: queue.Queue) -> None:
 
     try:
         with _client().messages.with_streaming_response.create(**kw) as resp:
-            buf = b""
+            buf        = b""
             skip_block = False
 
             for raw_chunk in resp.iter_bytes(chunk_size=1024):
@@ -94,8 +113,8 @@ def _stream_worker(kw: dict, q: queue.Queue) -> None:
                     nl = buf.find(b"\n")
                     if nl == -1:
                         break
-                    line = buf[: nl + 1]          # include \n
-                    buf  = buf[nl + 1:]
+                    line     = buf[: nl + 1]   # include \n
+                    buf      = buf[nl + 1:]
                     stripped = line.rstrip(b"\r\n")
 
                     if stripped.startswith(b"event:"):
@@ -105,7 +124,7 @@ def _stream_worker(kw: dict, q: queue.Queue) -> None:
                             continue
                     elif skip_block:
                         if stripped == b"":
-                            skip_block = False    # blank line ends the event block
+                            skip_block = False  # blank line ends the event block
                         continue
 
                     q.put(line)
@@ -117,9 +136,6 @@ def _stream_worker(kw: dict, q: queue.Queue) -> None:
         q.put(exc)
     finally:
         q.put(None)  # sentinel
-
-
-CHUNK_TIMEOUT = 30  # seconds between SSE chunks before aborting
 
 
 async def _stream_gen(kw: dict):
@@ -144,7 +160,7 @@ async def _stream_gen(kw: dict):
         yield chunk
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 app = FastAPI()
 
@@ -175,7 +191,7 @@ async def messages(request: Request):
             headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
         )
 
-    # Non-streaming: sync SDK call in thread
+    # Non-streaming: sync SDK call in a thread to keep the event loop free
     def _run():
         return _client().messages.create(**kw)
 
@@ -208,7 +224,7 @@ async def models():
     }
 
 
-# ── Entry point ─────────────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print(f"AgentRouter proxy  →  {TARGET}")
