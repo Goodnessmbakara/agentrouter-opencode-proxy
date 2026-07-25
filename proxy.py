@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 
 import anthropic
+import httpx
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
@@ -47,7 +48,11 @@ def _api_key() -> str:
 
 
 def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=_api_key(), base_url=TARGET)
+    return anthropic.Anthropic(
+        api_key=_api_key(),
+        base_url=TARGET,
+        timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
+    )
 
 
 # ── Request translation ─────────────────────────────────────────────────────────────────
@@ -108,13 +113,24 @@ def _stream_worker(kw: dict, q: queue.Queue) -> None:
         q.put(None)  # sentinel
 
 
+CHUNK_TIMEOUT = 30  # seconds between SSE chunks before aborting
+
+
 async def _stream_gen(kw: dict):
     q: queue.Queue = queue.Queue()
     t = threading.Thread(target=_stream_worker, args=(kw, q), daemon=True)
     t.start()
     loop = asyncio.get_event_loop()
     while True:
-        chunk = await loop.run_in_executor(None, q.get)
+        try:
+            chunk = await asyncio.wait_for(
+                loop.run_in_executor(None, q.get),
+                timeout=CHUNK_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"No chunk received from agentrouter.org in {CHUNK_TIMEOUT}s — upstream stalled"
+            )
         if chunk is None:
             break
         if isinstance(chunk, Exception):
