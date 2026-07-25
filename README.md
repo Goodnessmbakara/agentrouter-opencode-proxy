@@ -23,6 +23,26 @@ Sign up with this referral link and you get **$150 in free credits** to use on a
 
 **👉 https://agentrouter.org/register?aff=pP0u**
 
+---
+
+## Quickest setup: use the agent prompt
+
+If you're already inside an AI coding agent (OpenCode, Claude Code, Cursor, Cline, etc.), the fastest way to get set up is to paste the prompt from **[AGENT_SETUP_PROMPT.md](./AGENT_SETUP_PROMPT.md)** directly into your agent's chat.
+
+The agent will:
+1. Check prerequisites (Python 3.11+, git)
+2. Clone this repo
+3. Create the virtualenv and install dependencies
+4. Ask for your API key and store it securely
+5. Patch your `opencode.json` (or set env vars for other clients)
+6. Start the proxy
+7. Run both streaming and non-streaming end-to-end tests
+8. Report results and tell you which model to select
+
+No manual steps needed — the agent handles everything and confirms it works before finishing.
+
+---
+
 ## Why this exists
 
 AgentRouter is a Chinese API aggregator that provides cheap or free access to models like `claude-opus-4-6`, GPT-4o, DeepSeek, and others. It's fronted by an **Aliyun WAF that fingerprints TLS handshakes at the connection level** — not just bearer tokens.
@@ -125,7 +145,7 @@ This is the exact architecture of `proxy.py` in this repo.
 
 | Step | Finding | Source |
 |------|---------|--------|
-| 1 | WAF blocks by TLS fingerprint, not just bearer token | [agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/21) |
+| 1 | WAF blocks by TLS fingerprint, not just bearer token | [agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/issues/21) |
 | 2 | OpenCode (Node.js) is blocked the same way | [anomalyco/opencode#5060](https://github.com/anomalyco/opencode/issues/5060) |
 | 3 | Python sync `Anthropic` SDK passes the WAF | [yowanda/Reckora#67](https://github.com/yowanda/Reckora/pull/67) |
 | 4 | `base_url` must not include `/v1` — SDK appends it | [yowanda/Reckora#68](https://github.com/yowanda/Reckora/pull/68) |
@@ -148,13 +168,15 @@ This is the exact architecture of `proxy.py` in this repo.
 
 ---
 
-## Prerequisites
+## Manual setup
+
+Prefer to do it yourself? Follow these steps.
+
+### Prerequisites
 
 - Python 3.11+
 - An [AgentRouter](https://agentrouter.org/register?aff=pP0u) account with an API key (`sk-...` from `agentrouter.org/console/token`)
 - One of the supported clients above
-
-## Setup
 
 ### 1. Clone the repo
 
