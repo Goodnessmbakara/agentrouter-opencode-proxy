@@ -1,21 +1,6 @@
 # agentrouter-opencode-proxy
 
-A local proxy that lets the following Node.js AI coding clients use [AgentRouter](https://agentrouter.org) as an Anthropic-compatible LLM backend:
-
-| Client | Built on |
-|--------|----------|
-| [OpenCode](https://opencode.ai) | Vercel AI SDK (`@ai-sdk/anthropic`) |
-| [Claude Code](https://claude.ai/code) | `@anthropic-ai/sdk` |
-| [Cursor](https://cursor.com) | Anthropic / OpenAI API |
-| [Cline](https://github.com/cline/cline) | `@anthropic-ai/sdk` |
-| [Continue.dev](https://continue.dev) | `@anthropic-ai/sdk` |
-| [Zed](https://zed.dev) | Anthropic API |
-| [Aider](https://aider.chat) | `litellm` (Python, OpenAI-compatible) |
-| Any app using [Vercel AI SDK](https://sdk.vercel.ai) | `@ai-sdk/anthropic` |
-| Any app using [`@anthropic-ai/sdk`](https://github.com/anthropic-ai/sdk-python) | Node.js Anthropic SDK |
-| Any app using [LangChain.js](https://js.langchain.com) | `@langchain/anthropic` |
-
-Point any of these at `http://localhost:7187` and they'll work with AgentRouter.
+A local proxy that lets Node.js AI coding clients use [AgentRouter](https://agentrouter.org) as an Anthropic-compatible LLM backend.
 
 ## Get $150 in free credits
 
@@ -40,6 +25,25 @@ The agent will:
 8. Report results and tell you which model to select
 
 No manual steps needed — the agent handles everything and confirms it works before finishing.
+
+---
+
+## Supported clients
+
+| Client | Built on |
+|--------|----------|
+| [OpenCode](https://opencode.ai) | Vercel AI SDK (`@ai-sdk/anthropic`) |
+| [Claude Code](https://claude.ai/code) | `@anthropic-ai/sdk` |
+| [Cursor](https://cursor.com) | Anthropic / OpenAI API |
+| [Cline](https://github.com/cline/cline) | `@anthropic-ai/sdk` |
+| [Continue.dev](https://continue.dev) | `@anthropic-ai/sdk` |
+| [Zed](https://zed.dev) | Anthropic API |
+| [Aider](https://aider.chat) | `litellm` (Python, OpenAI-compatible) |
+| Any app using [Vercel AI SDK](https://sdk.vercel.ai) | `@ai-sdk/anthropic` |
+| Any app using [`@anthropic-ai/sdk`](https://github.com/anthropic-ai/sdk-python) | Node.js Anthropic SDK |
+| Any app using [LangChain.js](https://js.langchain.com) | `@langchain/anthropic` |
+
+Point any of these at `http://localhost:7187` and they'll work with AgentRouter.
 
 ---
 
@@ -145,7 +149,7 @@ This is the exact architecture of `proxy.py` in this repo.
 
 | Step | Finding | Source |
 |------|---------|--------|
-| 1 | WAF blocks by TLS fingerprint, not just bearer token | [agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/issues/21) |
+| 1 | WAF blocks by TLS fingerprint, not just bearer token | [agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/21) |
 | 2 | OpenCode (Node.js) is blocked the same way | [anomalyco/opencode#5060](https://github.com/anomalyco/opencode/issues/5060) |
 | 3 | Python sync `Anthropic` SDK passes the WAF | [yowanda/Reckora#67](https://github.com/yowanda/Reckora/pull/67) |
 | 4 | `base_url` must not include `/v1` — SDK appends it | [yowanda/Reckora#68](https://github.com/yowanda/Reckora/pull/68) |
