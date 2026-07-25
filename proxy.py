@@ -47,12 +47,18 @@ def _api_key() -> str:
     return k
 
 
+_anthropic_client: anthropic.Anthropic | None = None
+
+
 def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(
-        api_key=_api_key(),
-        base_url=TARGET,
-        timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
-    )
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(
+            api_key=_api_key(),
+            base_url=TARGET,
+            timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5),
+        )
+    return _anthropic_client
 
 
 # ── Request translation ─────────────────────────────────────────────────────────────────
@@ -120,7 +126,7 @@ async def _stream_gen(kw: dict):
     q: queue.Queue = queue.Queue()
     t = threading.Thread(target=_stream_worker, args=(kw, q), daemon=True)
     t.start()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     while True:
         try:
             chunk = await asyncio.wait_for(
@@ -193,13 +199,11 @@ async def messages(request: Request):
 @app.get("/v1/models")
 @app.get("/models")
 async def models():
-    """Stub model list — AgentRouter's /v1/models is also WAF-blocked for non-allowlisted clients."""
+    """Stub model list — only lists models confirmed working on agentrouter.org."""
     return {
         "object": "list",
         "data": [
-            {"id": "claude-opus-4-6",              "object": "model"},
-            {"id": "claude-sonnet-4-5-20250514",   "object": "model"},
-            {"id": "claude-haiku-4-5",              "object": "model"},
+            {"id": "claude-opus-4-6", "object": "model"},
         ],
     }
 
