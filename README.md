@@ -27,12 +27,99 @@ Everything else — `curl`, Node.js `fetch`, Python `httpx.AsyncClient`, raw `ht
 
 This proxy runs locally on port `7187`, receives requests from OpenCode's Node.js AI SDK, and re-issues them to AgentRouter using the **Python sync `anthropic` SDK** — which carries the correct TLS fingerprint.
 
-## Root cause research
+---
 
-- [agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/21) — documents the WAF allow-list behaviour
-- [anomalyco/opencode#5060](https://github.com/anomalyco/opencode/issues/5060) — OpenCode-specific report
-- [yowanda/Reckora#67](https://github.com/yowanda/Reckora/pull/67) — first confirmed fix (sync Anthropic SDK)
-- [yowanda/Reckora#69](https://github.com/yowanda/Reckora/pull/69) — confirmed async SDK also blocked; sync-in-thread is required
+## Research trail
+
+This solution was pieced together from several public issues and PRs. Here is the full chain of discovery in the order the clues surfaced.
+
+### 1. The WAF allowlist is documented publicly
+
+**[agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/21)** — *"Support ForgeCode as an official client (currently rejected with 'unauthorized client detected')"*
+
+This issue, opened by a ForgeCode contributor, contains the key finding:
+
+> AgentRouter is fronted by an Aliyun WAF that allowlists requests by **client fingerprint**, not just by bearer token. Generic API calls are rejected regardless of whether the API key is valid. Only the officially-supported clients and the Anthropic/OpenAI SDKs they're built on get past the check.
+>
+> The same token **does** get past client authentication when used with the official Claude Code client configured with `ANTHROPIC_BASE_URL=https://agentrouter.org/`.
+
+This was the first public confirmation that routing through the Anthropic SDK bypasses the WAF.
+
+---
+
+### 2. OpenCode hits the same wall
+
+**[anomalyco/opencode#5060](https://github.com/anomalyco/opencode/issues/5060)** — *"Agentrouter not working"*
+
+An OpenCode user reports the identical `unauthorized client detected` error after connecting with a valid AgentRouter key. The issue confirms that OpenCode's Node.js AI SDK cannot communicate with AgentRouter directly — the same WAF fingerprint block documented in #1.
+
+---
+
+### 3. First working fix: sync Anthropic SDK
+
+**[yowanda/Reckora#67](https://github.com/yowanda/Reckora/pull/67)** — *"fix(reasoning): route AgentRouter through Anthropic SDK so its WAF allowlist accepts requests"*
+
+The Reckora project (a Python app) hit the same wall and documented the fix in detail:
+
+> Switch the AgentRouter dispatch path from `AsyncOpenAI` (chat-completions shape) to `AsyncAnthropic` (messages shape) against the Anthropic-compatible `/v1/messages` route. This is the same wire shape Claude Code uses, so AgentRouter's WAF accepts our requests as a "Claude Code-shaped client".
+
+Live verification from their production VPS:
+```
+OpenAI SDK   → /v1/chat/completions  → 401 unauthorized client detected
+Anthropic SDK → /v1/messages         → 200 / 503 (downstream pool routing — WAF passed)
+```
+
+The 503 "no available channel" is a capacity issue on AgentRouter's pool, not a code bug. It means the WAF check passed.
+
+---
+
+### 4. Base URL trap: `/v1` double-prefix
+
+**[yowanda/Reckora#68](https://github.com/yowanda/Reckora/pull/68)** — *"fix(reasoning): coerce stale AgentRouter base URL to root so Anthropic SDK lands on /v1/messages"*
+
+Immediately after #67 shipped, a new failure:
+
+> The Anthropic SDK appends `/v1/messages` to whatever `base_url` it's given. If `base_url` is `https://agentrouter.org/v1`, the runtime URL becomes `/v1/v1/messages` and AgentRouter returns 404 "Invalid URL".
+
+**Fix:** set `base_url` to `https://agentrouter.org` (no `/v1` suffix). The SDK constructs the correct `/v1/messages` path on its own.
+
+This applies directly to our `opencode.json` config — `baseURL` must be `http://localhost:7187` with no path, and the proxy's `TARGET` must be `https://agentrouter.org` with no path.
+
+---
+
+### 5. Async SDK is also blocked — sync-in-thread required
+
+**[yowanda/Reckora#69](https://github.com/yowanda/Reckora/pull/69)** — *"fix(reasoning): use sync Anthropic SDK in asyncio.to_thread (AgentRouter WAF rejects async-httpx fingerprint)"*
+
+After #68 deployed, another 401 — even though the Anthropic SDK was being used:
+
+> Live A/B inside the production container, same key, same `anthropic==0.100.0`:
+> ```
+> Anthropic(...).messages.create(...)       → 503  (WAF passed, downstream pool routing)
+> AsyncAnthropic(...).messages.create(...)  → 401  "unauthorized client detected"
+> ```
+> The differentiator is the async-httpx (`AsyncHTTPTransport` / anyio-backed) TLS handshake itself; AgentRouter's Aliyun WAF fingerprints at the connection level and **only the sync httpx handshake is on the allowlist**.
+
+**Fix:** use `anthropic.Anthropic` (sync) and call `messages.create` inside `asyncio.to_thread` so the event loop stays non-blocking but the wire request uses the sync httpx TLS stack.
+
+This is the exact architecture of `proxy.py` in this repo.
+
+---
+
+### Summary of the discovery chain
+
+| Step | Finding | Source |
+|------|---------|--------|
+| 1 | WAF blocks by TLS fingerprint, not just bearer token | [agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/21) |
+| 2 | OpenCode (Node.js) is blocked the same way | [anomalyco/opencode#5060](https://github.com/anomalyco/opencode/issues/5060) |
+| 3 | Python sync `Anthropic` SDK passes the WAF | [yowanda/Reckora#67](https://github.com/yowanda/Reckora/pull/67) |
+| 4 | `base_url` must not include `/v1` — SDK appends it | [yowanda/Reckora#68](https://github.com/yowanda/Reckora/pull/68) |
+| 5 | `AsyncAnthropic` is also blocked — must use sync SDK in thread | [yowanda/Reckora#69](https://github.com/yowanda/Reckora/pull/69) |
+| 6 | AgentRouter injects `billing_summary` SSE events that break OpenCode's parser | Discovered live during setup |
+| 7 | `thinking` and `output_config` fields trigger AgentRouter's content filter | Discovered live during setup |
+| 8 | OpenCode AI SDK calls `/messages` not `/v1/messages` | Discovered live during setup |
+
+---
 
 ## Additional quirks discovered during setup
 
@@ -43,6 +130,8 @@ This proxy runs locally on port `7187`, receives requests from OpenCode's Node.j
 | OpenCode sends `thinking: {type: adaptive}` and `output_config` fields | Proxy strips these — AgentRouter's content filter blocks requests containing them |
 | OpenCode AI SDK calls `/messages` (no `/v1` prefix) | Proxy mounts on both `/messages` and `/v1/messages` |
 | `GET /v1/models` is also WAF-blocked | Proxy returns a local stub model list instead |
+
+---
 
 ## Prerequisites
 
