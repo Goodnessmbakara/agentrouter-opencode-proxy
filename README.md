@@ -2,6 +2,12 @@
 
 A local proxy that lets [OpenCode](https://opencode.ai) (and any Node.js AI SDK client) use [AgentRouter](https://agentrouter.org) as an Anthropic-compatible LLM backend.
 
+## Get $150 in free credits
+
+Sign up with this referral link and you get **$150 in free credits** to use on any model (Claude, GPT-4o, DeepSeek, Gemini, and more):
+
+**👉 https://agentrouter.org/register?aff=pP0u**
+
 ## Why this exists
 
 AgentRouter is a Chinese API aggregator that provides cheap or free access to models like `claude-opus-4-6`, GPT-4o, DeepSeek, and others. It's fronted by an **Aliyun WAF that fingerprints TLS handshakes at the connection level** — not just bearer tokens.
@@ -41,7 +47,7 @@ This proxy runs locally on port `7187`, receives requests from OpenCode's Node.j
 ## Prerequisites
 
 - Python 3.11+
-- An [AgentRouter](https://agentrouter.org) account with an API key (`sk-...` from `agentrouter.org/console/token`)
+- An [AgentRouter](https://agentrouter.org/register?aff=pP0u) account with an API key (`sk-...` from `agentrouter.org/console/token`)
 - [OpenCode](https://opencode.ai) installed
 
 ## Setup
