@@ -1,0 +1,54 @@
+Self-Check Attempt 2 (with code access)
+Model: Gemini 3.8 Flash
+Date: 2026-09-18
+Prompt: Full question with proxy.py source code provided (read from file)
+
+Response:
+
+### Analysis of Downstream HTTP Status Codes on Upstream HTTP 503
+
+#### 1. Executive Summary & Direct Answer
+When upstream (AgentRouter) returns an HTTP 503 error, the downstream client receives different HTTP status codes depending on the request type:
+
+- Non-streaming request ("stream": false): Downstream client receives HTTP 503 Service Unavailable.
+- Streaming request ("stream": true): Downstream client receives HTTP 200 OK.
+
+Despite hitting the identical upstream 503 error, the two request modes produce fundamentally different HTTP status codes.
+
+#### 2. Non-Streaming Request Mechanism (stream: false)
+
+HTTP Status Received: 503 Service Unavailable
+
+Trace & Propagation Path:
+1. Route Handling: The request reaches @app.post("/v1/messages") / @app.post("/messages") (lines 169-174). Since body.get("stream", False) is false, it skips the streaming block.
+2. Upstream Invocation: At lines 195-199, the proxy invokes _client().messages.create(**kw) within a worker thread using await asyncio.to_thread(_run).
+3. Upstream Error & Exception: Upstream returns HTTP 503. The sync Anthropic SDK raises an anthropic.APIStatusError containing status_code = 503.
+4. Exception Handling: The exception is caught at line 201.
+5. Response Construction: At lines 202-206, the proxy constructs and returns Response(content=json.dumps(e.body), status_code=e.status_code, ...). The status code is 503.
+6. Delivery: The upstream call completes entirely before the Response object is created, so the proxy knows the final status code before transmitting any HTTP headers.
+
+#### 3. Streaming Request Mechanism (stream: true)
+
+HTTP Status Received: 200 OK (with the error delivered as an SSE event inside the body)
+
+Trace & Propagation Path:
+1. Route Handling: When stream is true, line 175 sets kw["stream"] = True.
+2. Generator & StreamingResponse Definition: At lines 177-186, _safe_stream() is defined. At line 188, the route returns StreamingResponse(_safe_stream(), media_type="text/event-stream", ...). Starlette's StreamingResponse defaults to status_code=200. The generator has not executed at this point.
+3. ASGI Commitment (The Status Code Lock): FastAPI hands StreamingResponse to the ASGI server (uvicorn), which executes StreamingResponse.stream_response(). Before beginning iteration over the body iterator, stream_response immediately sends the ASGI http.response.start message containing HTTP status 200 and the response headers. This commits HTTP/1.1 200 OK onto the wire.
+4. Generator Execution & Upstream Failure: Only after the 200 is on the wire does stream_response iterate _safe_stream(). The error traverses four stages:
+   - Stage 1: _stream_worker calls _client().messages.with_streaming_response.create(**kw). Upstream responds with HTTP 503, SDK raises APIStatusError.
+   - Stage 2: _stream_worker catches the exception and puts it into the queue via q.put(exc).
+   - Stage 3: _stream_gen pulls from the queue, detects isinstance(chunk, Exception) and re-raises it.
+   - Stage 4: _safe_stream catches the APIStatusError and yields a synthetic SSE frame: event: error\ndata: {json error}\n\n
+5. Delivery: The error is yielded as SSE content inside the already-open HTTP 200 stream.
+
+#### 4. When and Why the Divergence Occurs
+
+- In the non-streaming path, the entire upstream roundtrip finishes before any HTTP response is generated.
+- In the streaming path, StreamingResponse is created and returned immediately. The ASGI server sends http.response.start (status 200) before initiating generator iteration.
+- Under HTTP/1.1, once headers are committed to the socket, the status code cannot be retroactively altered.
+- This behavior is an inherent consequence of Starlette's StreamingResponse and ASGI architecture rather than a bug in the proxy.
+- The error is not lost or silently dropped; _safe_stream converts the exception into an event: error SSE frame.
+
+Grading Notes:
+This response correctly identifies both status codes (503 non-streaming, 200 streaming), traces the full four-stage error propagation path, identifies the ASGI header commitment timing, and attributes the behavior to Starlette/ASGI lifecycle.

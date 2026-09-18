@@ -1,0 +1,18 @@
+Self-Check Attempt A (NO code access, blind)
+Model: Gemini 3.8 Flash (blind-evaluator, no tools)
+Date: 2026-09-18
+
+Conclusion: Non-streaming gets 503 (or 500 if unhandled). Streaming gets 200 OK.
+
+Key claims:
+- Non-streaming: SDK raises APIStatusError with status_code=503, caught by handler, returns 503 (CORRECT)
+- Streaming: StreamingResponse commits 200 before generator runs (CORRECT)
+- Generator laziness means upstream call is deferred (CORRECT)
+- ASGI http.response.start sends 200 before body iteration (CORRECT)
+- After headers committed, status code cannot be changed (CORRECT)
+
+WRONG CLAIM about streaming failure mode:
+- Says "followed immediately by an abrupt connection drop, empty stream, or chunked transfer encoding error"
+- Does NOT know about _safe_stream catching the error and yielding an SSE error frame
+- Assumes the error either crashes the generator or is caught generically
+- Says "If the proxy has a try/except inside the generator, it may yield an SSE error event" but frames this as speculative

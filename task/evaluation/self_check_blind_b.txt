@@ -1,0 +1,19 @@
+Self-Check Attempt B (NO code access, blind)
+Model: Gemini 3.8 Flash (blind-evaluator, no tools)
+Date: 2026-09-18
+
+Conclusion: Non-streaming gets 503 (or 500 if unhandled). Streaming gets 200 OK.
+
+Key claims:
+- Non-streaming: SDK raises APIStatusError, handler catches and returns 503 (CORRECT)
+- Streaming: StreamingResponse commits 200 before generator runs (CORRECT)
+- ASGI http.response.start sends status 200 before body iteration (CORRECT)
+- HTTP protocol immutability prevents changing status after headers sent (CORRECT)
+
+WRONG CLAIM about streaming failure mode:
+- Says "If the proxy has a try/except inside the generator, it may yield an SSE error event" (speculative, not definitive)
+- Also says "If the exception is unhandled inside the generator, it crashes the generator. Starlette/Uvicorn catches the exception, logs Exception in ASGI application, and aborts the connection"
+- Does NOT know definitively that _safe_stream catches it and yields the SSE error frame
+- Presents the SSE error yield as one of two possibilities rather than the actual behavior
+
+PARTIALLY CORRECT: Gets the status codes right (200 vs 503) and the ASGI lifecycle explanation, but cannot trace the specific error propagation through _stream_worker -> queue -> _stream_gen -> _safe_stream because it hasn't read the code.

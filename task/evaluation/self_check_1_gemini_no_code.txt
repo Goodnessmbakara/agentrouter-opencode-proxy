@@ -1,0 +1,20 @@
+Self-Check Attempt 1
+Model: Gemini 3.1 Pro (no code access, via web app)
+Date: 2026-09-17
+Prompt: "A client sends a streaming request through the proxy. Upstream returns an HTTP 503 error with body {"error": {"message": "no available channel"}}. What HTTP status code does the downstream client receive, and why?"
+
+Response:
+The downstream client receives an HTTP 503 (Service Unavailable) status code.
+
+Here is why this happens:
+
+When a client makes an HTTP request — even one intended for streaming (such as Server-Sent Events, gRPC, or chunked transfer encoding) — the HTTP connection must first be established with standard response headers before any data streaming can begin.
+
+Because the upstream server immediately failed to allocate the necessary resources (indicated by the {"error": {"message": "no available channel"}} payload), it replied to the proxy with a 503 status code in its initial response headers. Since the proxy had not yet established a successful stream or sent a 200 OK header to the client, it simply forwards the 503 status code and the JSON error body directly downstream.
+
+Mid-Stream Failures: If the upstream server had already sent a 200 OK and started streaming data before encountering the error, the client would keep the 200 OK. You cannot change an HTTP status code retroactively once headers are sent. In a mid-stream failure, the proxy typically terminates the connection abruptly (TCP RST) or sends an RST_STREAM frame (HTTP/2).
+
+To verify this behavior, you can inspect the initial network headers on the client side to confirm the proxy is successfully passing the 503 through rather than swallowing it or returning a generic 502 Bad Gateway.
+
+Grading Notes:
+This response gets the non-streaming case right (would be 503) but applies it to the streaming case too. It assumes the proxy checks upstream before committing headers. It does not examine the actual proxy code and does not know that StreamingResponse commits 200 before the generator runs.

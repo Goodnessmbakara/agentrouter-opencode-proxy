@@ -1,0 +1,69 @@
+{
+  "criteria": [
+    {
+      "id": "R01",
+      "description": "States that the non-streaming client receives HTTP 503 (or the upstream's actual error status code).",
+      "accept_alternatives": ["502", "5xx with explanation that proxy re-raises the upstream code"]
+    },
+    {
+      "id": "R02",
+      "description": "States that the streaming client receives HTTP 200, not 503 or any other error code.",
+      "accept_alternatives": []
+    },
+    {
+      "id": "R03",
+      "description": "Identifies that the two request modes produce different HTTP status codes from the same upstream error.",
+      "accept_alternatives": []
+    },
+    {
+      "id": "R04",
+      "description": "Explains that the non-streaming path constructs a Response object after the upstream call completes, so the error status code is available before headers are sent.",
+      "accept_alternatives": ["mentions that the except block at lines 201-206 returns Response with status_code=e.status_code"]
+    },
+    {
+      "id": "R05",
+      "description": "Explains that StreamingResponse sends HTTP headers (including status 200) to the client before the generator begins iterating.",
+      "accept_alternatives": ["mentions http.response.start is sent before body iteration", "mentions that ASGI commits headers before yielding chunks"]
+    },
+    {
+      "id": "R06",
+      "description": "Identifies that the 200 status is irrevocable once sent: HTTP/1.1 does not allow changing the status code after headers are on the wire.",
+      "accept_alternatives": ["mentions that chunked transfer encoding commits the status with the first header block"]
+    },
+    {
+      "id": "R07",
+      "description": "Identifies that the upstream error reaches the generator as an exception (via the queue in _stream_worker, re-raised in _stream_gen).",
+      "accept_alternatives": ["describes the worker thread catching the exception and putting it in the queue", "mentions _stream_gen re-raises exceptions from the queue"]
+    },
+    {
+      "id": "R08",
+      "description": "States that _safe_stream catches the exception and yields an SSE frame (event: error with JSON data) instead of crashing.",
+      "accept_alternatives": ["mentions the except block yields error content back into the stream"]
+    },
+    {
+      "id": "R09",
+      "description": "Correctly describes the error delivery format: the client receives the error as SSE content (event: error, data: JSON) within the 200 response body, not as an HTTP status code.",
+      "accept_alternatives": []
+    },
+    {
+      "id": "R10",
+      "description": "Does NOT claim that the streaming client receives 503. This is the primary wrong answer the rubric must reject.",
+      "accept_alternatives": []
+    },
+    {
+      "id": "R11",
+      "description": "Does NOT claim that the error is silently swallowed or lost. The error is delivered as SSE content.",
+      "accept_alternatives": []
+    },
+    {
+      "id": "R12",
+      "description": "Correctly attributes the behavior to the ASGI/Starlette response lifecycle, not to a bug or oversight in the proxy code specifically.",
+      "accept_alternatives": ["mentions this is inherent to how StreamingResponse works in any FastAPI app", "mentions ASGI protocol"]
+    },
+    {
+      "id": "R13",
+      "description": "Traces the error propagation path through at least three of these four stages: _stream_worker exception -> queue -> _stream_gen re-raise -> _safe_stream yield.",
+      "accept_alternatives": ["traces at least worker -> generator -> yield"]
+    }
+  ]
+}

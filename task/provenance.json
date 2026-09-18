@@ -1,0 +1,32 @@
+{
+  "repository": {
+    "name": "agentrouter-opencode-proxy",
+    "owner": "Goodnessmbakara",
+    "url": "https://github.com/Goodnessmbakara/agentrouter-opencode-proxy",
+    "commit": "336bd4ec797c2f4de9fbf63c4e58bbd1de9cd230",
+    "commit_date": "2026-09-17"
+  },
+  "license": {
+    "type": "No explicit license file in repository. Author-owned public code.",
+    "permission": "Author (Goodnessmbakara / Goodness Mbakara) is the task author. Full permission to use."
+  },
+  "authorship": {
+    "relationship": "I am the sole author and owner of this repository.",
+    "confirmation": "No third-party permission required."
+  },
+  "dependencies": {
+    "pinned_for_task": {
+      "anthropic": "0.49.0",
+      "fastapi": ">=0.111",
+      "uvicorn": ">=0.30",
+      "httpx": ">=0.27"
+    },
+    "note": "anthropic pinned to 0.49.0 because >=1.0 migrated from httpx to httpx2, which is incompatible with the custom httpx.Client passed at proxy.py line 78. The pinned version matches what the proxy was written against."
+  },
+  "contamination": {
+    "probe_question": "In the agentrouter-opencode-proxy repository by Goodnessmbakara, a client sends a streaming request through the proxy and the upstream API returns HTTP 503. What HTTP status code does the client receive from the proxy?",
+    "probe_result": "Gemini 3.1 Pro (no code access) answered HTTP 503. This is the wrong answer. The correct answer is HTTP 200.",
+    "probe_model": "Gemini 3.1 Pro",
+    "probe_date": "2026-09-17"
+  }
+}

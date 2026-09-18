@@ -1,0 +1,45 @@
+============================================================
+STEP 1: Starting mock upstream on port 9000
+============================================================
+  Mock upstream is ready.
+
+============================================================
+STEP 2: Starting proxy on port 7187 -> mock upstream
+============================================================
+  Proxy is ready.
+
+============================================================
+TEST A: Non-streaming request
+============================================================
+  HTTP status code:  503
+  Content-Type:      application/json
+  Body (first 500):  {"type": "error", "error": {"type": "not_found_error", "message": "no available channel"}}
+
+============================================================
+TEST B: Streaming request
+============================================================
+  HTTP status code:  200
+  Content-Type:      text/event-stream; charset=utf-8
+  Headers sent to client BEFORE any body bytes:
+    date: Thu, 17 Sep 2026 23:40:12 GMT
+    server: uvicorn
+    cache-control: no-cache
+    x-accel-buffering: no
+    content-type: text/event-stream; charset=utf-8
+    transfer-encoding: chunked
+
+  SSE body content:
+  event: error
+data: {"type": "error", "error": {"type": "api_error", "message": "{'type': 'error', 'error': {'type': 'not_found_error', 'message': 'no available channel'}}"}}
+
+
+============================================================
+SUMMARY
+============================================================
+  Non-streaming: HTTP 503
+  Streaming:     HTTP 200
+
+  >>> STATUS CODES DIFFER <<<
+  Non-streaming gets the real upstream error code (503).
+  Streaming always gets 200 because headers are
+  committed before the generator runs.

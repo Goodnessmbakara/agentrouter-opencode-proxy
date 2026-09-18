@@ -1,0 +1,68 @@
+[
+  {
+    "id": "E01",
+    "claim": "The non-streaming path catches APIStatusError and returns a Response with the upstream status code.",
+    "source": {
+      "file": "proxy.py",
+      "symbol": "messages",
+      "lines": "198-206"
+    },
+    "verification": "Lines 198-199 call `_client().messages.create(**kw)` in a thread. Lines 201-206 catch `anthropic.APIStatusError` and return `Response(content=..., status_code=e.status_code, ...)`. The status code from the upstream error (503) is passed directly to the Response constructor.",
+    "interpretation": "The non-streaming Response is constructed after the upstream call completes, so the error status code is known before any bytes are sent to the client. FastAPI sends the correct 503 status."
+  },
+  {
+    "id": "E02",
+    "claim": "The streaming path returns a StreamingResponse unconditionally with default status 200 before the generator executes.",
+    "source": {
+      "file": "proxy.py",
+      "symbol": "messages",
+      "lines": "174-192"
+    },
+    "verification": "Line 174 checks `body.get('stream', False)`. Lines 177-186 define `_safe_stream()` as an async generator, but do not call it. Line 188 returns `StreamingResponse(_safe_stream(), ...)`. The StreamingResponse constructor (Starlette) defaults `status_code=200`. No status code argument is passed. The generator has not yielded anything at this point.",
+    "interpretation": "The route handler returns before the generator runs. The StreamingResponse object carries status_code=200. The ASGI server will send this status to the client before iterating the generator."
+  },
+  {
+    "id": "E03",
+    "claim": "Starlette's StreamingResponse.stream_response sends http.response.start (status + headers) before iterating the body generator.",
+    "source": {
+      "file": "starlette/responses.py (Starlette library)",
+      "symbol": "StreamingResponse.stream_response",
+      "lines": "238-251 (Starlette 0.46.2)"
+    },
+    "verification": "Lines 239-244 send the `http.response.start` ASGI message containing `self.status_code` (200) and `self.raw_headers` immediately when `stream_response` is called. Line 246 begins `async for chunk in self.body_iterator`, which is the first point where the generator actually executes. The status code is committed to the wire before the generator runs.",
+    "interpretation": "This is the precise moment the HTTP 200 becomes irrevocable. The ASGI server has told the client '200 OK' before knowing whether the upstream call will succeed or fail. No subsequent code can change it."
+  },
+  {
+    "id": "E04",
+    "claim": "The upstream 503 is raised as an exception in _stream_worker, placed in the queue, re-raised in _stream_gen, and caught by _safe_stream which yields an SSE error frame.",
+    "source": {
+      "file": "proxy.py",
+      "symbol": "_stream_worker, _stream_gen, _safe_stream",
+      "lines": "96-186"
+    },
+    "verification": "_stream_worker (line 96) calls `_client().messages.with_streaming_response.create(**kw)` at line 105. When upstream returns 503, the Anthropic SDK raises APIStatusError. The except block at line 135 catches it and calls `q.put(exc)` at line 136. _stream_gen (line 141) retrieves the exception from the queue at line 149 via `q.get()`, checks `isinstance(chunk, Exception)` at line 158, and raises it at line 159. _safe_stream (line 177) catches it at line 181 (`except anthropic.APIStatusError as e`) and yields `f\"event: error\\ndata: {err}\\n\\n\".encode()` at line 183.",
+    "interpretation": "The error traverses four boundaries: upstream HTTP response -> SDK exception -> queue item -> re-raised exception -> SSE yield. At every boundary, the error is data, not a status code. The HTTP status was already committed before this chain began."
+  },
+  {
+    "id": "E05",
+    "claim": "The client receives the error as an SSE event with type 'error' inside an HTTP 200 stream, not as an HTTP error status code.",
+    "source": {
+      "file": "proxy.py",
+      "symbol": "_safe_stream",
+      "lines": "181-183"
+    },
+    "verification": "Line 182 serializes the error as JSON: `json.dumps({\"type\": \"error\", \"error\": {\"type\": \"api_error\", \"message\": str(e.body)}})`. Line 183 yields it formatted as an SSE frame: `f\"event: error\\ndata: {err}\\n\\n\".encode()`. This is sent as chunked body content within the existing HTTP 200 response.",
+    "interpretation": "The downstream client's HTTP library reports status 200. The error information is only available by parsing the SSE stream body. A client that checks HTTP status codes to detect errors will miss this entirely."
+  },
+  {
+    "id": "E06",
+    "claim": "Experimental verification confirms the status code divergence: non-streaming receives 503, streaming receives 200, from the same upstream 503.",
+    "source": {
+      "file": "task/environment/experiment_output.txt",
+      "symbol": "test_harness.py output",
+      "lines": "1-42"
+    },
+    "verification": "The test harness starts a mock upstream returning 503 on port 9000, starts the proxy on port 7187 pointed at the mock, and sends both request types. Non-streaming: `HTTP status code: 503`, body matches upstream error. Streaming: `HTTP status code: 200`, Content-Type `text/event-stream`, body contains `event: error` SSE frame with the error message.",
+    "interpretation": "The same upstream failure produces different HTTP status codes at the client depending solely on whether `stream: true` was set. This confirms the analysis is not theoretical; it is the observed runtime behavior."
+  }
+]

@@ -1,0 +1,19 @@
+Self-Check Attempt C (NO code access, blind)
+Model: Gemini 3.8 Flash (blind-evaluator, no tools)
+Date: 2026-09-18
+
+Conclusion: Non-streaming gets 503 (or 500 if unhandled). Streaming gets 200 OK.
+
+Key claims:
+- Non-streaming: SDK raises APIStatusError with status_code=503 (CORRECT)
+- Streaming: StreamingResponse commits 200 before generator (CORRECT)
+- ASGI http.response.start sends status 200 before body iteration (CORRECT)
+
+WRONG CLAIMS about streaming failure mode:
+- Says streaming ends with "abrupt connection drop (TCP RST/FIN) or an SSE error event, resulting in IncompleteRead, ChunkedEncodingError, or unexpected stream closure"
+- Does NOT trace the _stream_worker -> queue -> _stream_gen -> _safe_stream path
+- Does NOT know that the error is definitively caught and yielded as SSE content
+- Frames the SSE error yield as speculative ("or an SSE error event")
+- Says "followed immediately by an abrupt socket disconnection without any SSE data" in the detailed trace
+
+PARTIALLY CORRECT: Gets the top-level status codes right but cannot describe the actual error delivery mechanism because it hasn't read proxy.py.

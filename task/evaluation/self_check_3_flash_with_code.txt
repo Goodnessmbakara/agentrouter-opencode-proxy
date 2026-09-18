@@ -1,0 +1,54 @@
+Self-Check Attempt 3 (with code access)
+Model: Gemini 3.8 Flash
+Date: 2026-09-18
+Prompt: Full question with proxy.py source code provided (read from file)
+
+Response:
+
+# Analysis of Upstream HTTP 503 Handling in proxy.py
+
+When the upstream AgentRouter returns an HTTP 503, the downstream client receives different HTTP status codes depending on whether the request was non-streaming or streaming:
+
+- Non-streaming (stream: false): The downstream client receives HTTP 503 Service Unavailable.
+- Streaming (stream: true): The downstream client receives HTTP 200 OK.
+
+## 1. Non-Streaming Request Path (stream: false)
+
+### Downstream Result
+- HTTP Status Code: 503
+- Content-Type: application/json
+
+### Step-by-Step Code Trace
+1. Routing and Dispatch (lines 168-173): body.get("stream", False) is False, bypasses streaming branch.
+2. Upstream Request Execution (lines 195-200): asyncio.to_thread(_run) calls _client().messages.create(**kw).
+3. Exception Triggered: Upstream responds with HTTP 503. Anthropic SDK raises anthropic.APIStatusError with e.status_code = 503.
+4. Error Handling & Response Construction (lines 201-206): Exception caught, Response created with status_code=e.status_code (503).
+5. Delivery: FastAPI sends ASGI http.response.start with status 503. Client receives 503.
+
+## 2. Streaming Request Path (stream: true)
+
+### Downstream Result
+- HTTP Status Code: 200
+- Content-Type: text/event-stream; charset=utf-8
+- Body: SSE event: error frame
+
+### Step-by-Step Code Trace
+1. Routing (lines 174-192): _safe_stream() generator defined but not executed. StreamingResponse returned immediately with default status_code=200.
+2. Committing HTTP Headers (ASGI Lifecycle): Starlette's StreamingResponse.stream_response() sends http.response.start with status 200 BEFORE iterating the generator. HTTP/1.1 200 OK committed to wire.
+3. Generator Invocation: _safe_stream() iterates _stream_gen(kw). _stream_gen spawns _stream_worker in daemon thread.
+4. Upstream Failure: _stream_worker calls _client().messages.with_streaming_response.create(**kw). SDK raises APIStatusError on 503.
+5. Queue Traversal: _stream_worker catches exception, puts it on queue via q.put(exc). _stream_gen retrieves it, checks isinstance(chunk, Exception), re-raises.
+6. SSE Error Yield (lines 181-183): _safe_stream catches APIStatusError, yields event: error SSE frame with JSON error body.
+7. Delivery: Error sent as chunked body content over the already-established HTTP 200 connection.
+
+## 3. Why the Divergence Occurs
+
+1. Timing of HTTP Status Commitment:
+   - Non-streaming: route handler awaits upstream call before creating Response. Error status known before any bytes sent.
+   - Streaming: route handler returns StreamingResponse before upstream request. Starlette sends status 200 before iterating generator.
+2. HTTP/1.1 Invariant: Once http.response.start is sent, status code is committed. Cannot be changed.
+3. In-Band Mitigation: _safe_stream transforms the error into an SSE event but cannot alter the committed 200 status.
+4. Client Impact: HTTP clients checking status codes will see 200 as success. Only SSE-aware parsers will detect the error.
+
+Grading Notes:
+This response correctly identifies both status codes, traces the four-stage error propagation, identifies the ASGI header commitment timing, and attributes the behavior to Starlette/ASGI lifecycle. Comprehensive and accurate.
